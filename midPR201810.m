@@ -1,7 +1,6 @@
 % Main Function to Complete Phase Retrieval of Mid-frequency
 %% Parameter Initialization
 clear
-clc
 tic
 
 lambda = 632.8e-6;
