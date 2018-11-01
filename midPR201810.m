@@ -44,17 +44,21 @@ ImgMeasured = Iout;
 % end
 % ImgMeasured = IoutExtended;
 %% Cells Initialization for Phase Retrieval
-E_Obj = cell(1,imgNum);
-for ii=1:imgNum;E_Obj{ii}=zeros(pixNum,pixNum);end
-E_Diff = E_Obj;
-E_invDiff = E_Obj;
-E_Diff_sum = E_Obj;
-E_Diff_temp = E_Obj;
-E_zero = E_Obj;
+E_zeros = cell(1,imgNum);
+E_ones = cell(1,imgNum);
+for ii=1:imgNum
+    E_zeros{ii}=zeros(pixNum,pixNum);
+    E_ones{ii}=ones(pixNum,pixNum);
+end
+E_Diff = E_zeros;
+E_Diff_sum = E_zeros;
+E_Diff_temp = E_zeros;
+E_Update = E_zeros;
 
 CostFuncTemp = zeros(1,imgNum);
 %% Initial Figure
-figure(2)   % create figure for displaying the result through out the iteration
+figNum=2;
+figure(figNum)   % create figure for displaying the result through out the iteration
 % colormap(gray)
 subplot(2,2,1)
 imagesc(unwrap(angle(PhaseTruth)))
@@ -91,8 +95,14 @@ E_Obj_Result = E_Obj_Init.*FocalPhase;
 %% Iteration Settings
 iterNum=60;	% The number of iterations to be calculated
 CostFunc = ones(1,iterNum);
-E_theta_Gradient_Last_Iter=ones(pixNum,pixNum);
-Dq_Last_Iter=0;
+E_theta_Gradient_Last_Iter=cell(1,imgNum);
+for ii=1:imgNum
+    E_theta_Gradient_Last_Iter{ii}=ones(pixNum,pixNum)/pixNum/pixNum;%the sum equals to one
+end
+E_theta_Gradient = E_zeros;
+Dq_Last_Iter=E_zeros;
+Dq=E_zeros;
+
 p=1; % The counter of the loop
 while p < iterNum&&(CostFunc(p)>1e-4)	% The number of iterations that will be
                                     % calculated (This method converge within
@@ -105,7 +115,7 @@ while p < iterNum&&(CostFunc(p)>1e-4)	% The number of iterations that will be
     E_Diff_f(E_Diff_f==0)=eps;
 %% Procedure 2 3
     E_Diff{1} = ASMDiffgpu(E_Diff_f,z_prop(1)-f,lambda,Dim);
-    E_Diff_sum=E_zero;
+    E_Diff_sum=E_zeros;
     for imgCount = 1:imgNum        
         % Master plane
         E_Diff{imgCount} = sqrt(ImgMeasured{imgCount}).*(E_Diff{imgCount}./abs(E_Diff{imgCount}));
@@ -113,28 +123,33 @@ while p < iterNum&&(CostFunc(p)>1e-4)	% The number of iterations that will be
         for imgCountTemp = 1:imgNum
             if imgCountTemp~=imgCount
                 E_Diff_temp{imgCountTemp}=ASMDiffgpu(E_Diff{imgCount},z_prop(imgCountTemp)-z_prop(imgCount),lambda,Dim);
-                E_Diff_temp{imgCountTemp} = sqrt(ImgMeasured{imgCountTemp}).*(E_Diff_temp{imgCountTemp}./abs(E_Diff_temp{imgCountTemp}));
-                E_Diff_sum{imgCount}=E_Diff_sum{imgCount}+ASMDiffgpu(E_Diff_temp{imgCountTemp},-(z_prop(imgCountTemp)-z_prop(imgCount)),lambda,Dim);
+                E_Diff_temp{imgCountTemp} = sqrt(ImgMeasured{imgCountTemp}).*(E_Diff_temp{imgCountTemp}./abs(E_Diff_temp{imgCountTemp}))-E_Diff_temp{imgCountTemp};
+                E_Diff_sum{imgCount}=E_Diff_sum{imgCount}+conj(ASMDiffgpu(E_Diff_temp{imgCountTemp},-(z_prop(imgCountTemp)-z_prop(imgCount)),lambda,Dim));
             end
         end
-        E_Diff{imgCount}=E_Diff_sum{imgCount}/(imgNum-1);
+%         E_Diff{imgCount}=E_Diff_sum{imgCount}/(imgNum-1);
         E_Diff{imgCount}=sqrt(ImgMeasured{imgCount}).*(E_Diff{imgCount}./abs(E_Diff{imgCount}));
-
+        
+        E_theta_Gradient{imgCount}=2*imag(E_Diff{imgCount}.*E_Diff_sum{imgCount});
+        
+        Dq{imgCount}=-1/2*E_theta_Gradient{imgCount}+(sum(sum(E_theta_Gradient{imgCount}.^2))/sum(sum(E_theta_Gradient_Last_Iter{imgCount}.^2)))*Dq_Last_Iter{imgCount};
+        E_theta_Gradient_Last_Iter{imgCount}=E_theta_Gradient{imgCount};
+        Dq_Last_Iter{imgCount}=Dq{imgCount};
+%         E_Obj_Result=real(E_Obj_Result)+1j*(imag(E_Obj_Result)-0.00001*Dq);
         
 
         
         if imgCount<imgNum
-            E_Diff{imgCount+1}=ASMDiffgpu(E_Diff{imgCount},z_prop(imgCount+1)-z_prop(imgCount),lambda,Dim);
+%             E_Update{imgCount}=real(E_Diff{imgCount})+1j*(imag(E_Diff{imgCount})-0.001*Dq{imgCount});
+            E_Update{imgCount}=abs(E_Diff{imgCount}).*exp(1j*(angle(E_Diff{imgCount})+0.0003*Dq{imgCount}));
+%             E_Update{imgCount}=abs(E_Diff{imgCount}).*exp(1j*(angle(E_Diff{imgCount})));
+            E_Diff{imgCount+1}=ASMDiffgpu(E_Update{imgCount},z_prop(imgCount+1)-z_prop(imgCount),lambda,Dim);
         else   
             
     % Inverse Diffraction
             E_Obj_Result = ASMDiffgpu(E_Diff{imgCount},-z_prop(imgCount),lambda,Dim);
         
-            E_theta_Gradient=2*imag(E_Diff{imgCount}.*E_Diff_sum{imgCount});
-            Dq=-1/2*E_theta_Gradient+(sum(sum(E_theta_Gradient.^2))/sum(sum(E_theta_Gradient_Last_Iter.^2)))*Dq_Last_Iter;
-            E_theta_Gradient_Last_Iter=E_theta_Gradient;
-            Dq_Last_Iter=Dq;
-            E_Obj_Result=real(E_Obj_Result)+1j*(imag(E_Obj_Result)-0.00001*Dq);
+            
         end
     % Statistics
 %     CostFuncTemp(imgCount)=norm((abs(E_Diff{imgCount})-sqrt(ImgMeasured{imgCount})),2);
@@ -157,21 +172,21 @@ while p < iterNum&&(CostFunc(p)>1e-4)	% The number of iterations that will be
     disp([num2str(CostFunc(p)),'(',num2str(p),')']);
     
 %% Plot Current Results
-    figure(2)    
+    figure(figNum)    
     subplot(2,2,2)								% Plot the phase levels
     imagesc(unwrap((Phase_Obj_Result-angle(FocalPhase)).*Amp_Obj_Result));
     title('Recovered Phase');
     axis equal
     axis off
     
-    figure(2)
+    figure(figNum)
     subplot(2,2,3)								% Plot the phase levels
     imagesc(angle(Phase_Obj_Result./(E_Obj_Result/k)));
     title('MSF Error');
     axis equal
     axis off
 
-    figure(2)
+    figure(figNum)
     subplot(2,2,4)					% Calculate and plot the intensity quotient as a 
     plot((2:p),CostFunc(2:p),'b.-')	    % function of the number of iterations
     axis([1 iterNum -0.01 max(CostFunc)])
@@ -184,5 +199,6 @@ while p < iterNum&&(CostFunc(p)>1e-4)	% The number of iterations that will be
     
 end
 toc
+final=CostFunc(end)
 
-RMS=sqrt(sum(sum((unwrap((angle(E_Obj_Result)-angle(FocalPhase)).*(abs(E_Obj_Result)>1e-6)))-unwrap(angle(PhaseTruth))).^2))/pixNum^2;
+% RMS=sqrt(sum(sum((unwrap((angle(E_Obj_Result)-angle(FocalPhase)).*(abs(E_Obj_Result)>1e-6)))-unwrap(angle(PhaseTruth))).^2))/pixNum^2;
